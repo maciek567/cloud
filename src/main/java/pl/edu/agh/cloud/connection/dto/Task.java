@@ -3,7 +3,7 @@ package pl.edu.agh.cloud.connection.dto;
 import lombok.Data;
 
 @Data
-public class CloudletInfo {
+public class Task {
 
     private int cloudletSize;
     private int inputAndProgramFileSize;

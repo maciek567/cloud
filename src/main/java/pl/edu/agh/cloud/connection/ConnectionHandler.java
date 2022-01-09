@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 import pl.edu.agh.cloud.cloudsim.CloudDoesNotExistException;
 import pl.edu.agh.cloud.cloudsim.CloudsimService;
 import pl.edu.agh.cloud.connection.dto.CloudsInfoResponse;
-import pl.edu.agh.cloud.connection.dto.TaskRequest;
+import pl.edu.agh.cloud.connection.dto.Task;
 import pl.edu.agh.cloud.connection.dto.TaskResponse;
 
 @RestController
@@ -34,7 +34,7 @@ public class ConnectionHandler {
 
     @PostMapping(value = "/process", consumes = "application/json")
     public ResponseEntity<String> processTask(@RequestBody String serializedTask) {
-        TaskRequest taskRequest = gson.fromJson(serializedTask, TaskRequest.class);
+        Task taskRequest = gson.fromJson(serializedTask, Task.class);
         try {
             final TaskResponse taskResponse = cloudsimService.processTask(taskRequest);
             String responseJson = gson.toJson(taskResponse);

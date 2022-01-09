@@ -9,8 +9,7 @@ import org.cloudbus.cloudsim.provisioners.PeProvisionerSimple;
 import org.cloudbus.cloudsim.provisioners.RamProvisionerSimple;
 import org.springframework.stereotype.Service;
 import pl.edu.agh.cloud.connection.dto.CloudInfo;
-import pl.edu.agh.cloud.connection.dto.CloudletInfo;
-import pl.edu.agh.cloud.connection.dto.TaskRequest;
+import pl.edu.agh.cloud.connection.dto.Task;
 import pl.edu.agh.cloud.connection.dto.TaskResponse;
 
 import java.text.DecimalFormat;
@@ -26,23 +25,21 @@ public class CloudsimService {
     @Setter
     private List<CloudInfo> cloudsInfo;
     private DatacenterBroker broker;
+    private int cloudId;
 
     public CloudsimService() {
-        List<CloudInfo> clouds = new ArrayList<>();
-        clouds.add(new CloudInfo(0, 10000, 10000, 8192, 1000));
-        clouds.add(new CloudInfo(1, 30000, 100000, 16384, 1000));
-        clouds.add(new CloudInfo(2, 4000, 10000, 8192, 1000));
-        this.cloudsInfo = clouds;
+        defineAvailableClouds();
+        setCloudFromEnvVariable();
     }
 
-    public TaskResponse processTask(TaskRequest taskRequest) throws CloudDoesNotExistException {
+    public TaskResponse processTask(Task taskRequest) throws CloudDoesNotExistException {
         try {
-            setResources(taskRequest.getCloudId());
+            setResources();
             prepareCloudlets(taskRequest);
             CloudSim.startSimulation();
             List<Cloudlet> cloudletReceivedList = broker.getCloudletReceivedList();
             CloudSim.stopSimulation();
-            return prepareResponse(cloudletReceivedList);
+            return prepareResponse(cloudletReceivedList.get(0));
         } catch (CloudDoesNotExistException e) {
             throw new CloudDoesNotExistException();
         } catch (Exception e) {
@@ -52,7 +49,30 @@ public class CloudsimService {
         }
     }
 
-    private void setResources(int cloudId) throws CloudDoesNotExistException {
+    private void defineAvailableClouds() {
+        List<CloudInfo> clouds = new ArrayList<>();
+        clouds.add(new CloudInfo(0, 4000, 10000, 8192, 1000));
+        clouds.add(new CloudInfo(1, 1000, 15000, 4096, 1000));
+        clouds.add(new CloudInfo(2, 3000, 20000, 8192, 2000));
+        this.cloudsInfo = clouds;
+    }
+
+    private void setCloudFromEnvVariable() {
+        try {
+            int cloud = Integer.parseInt(System.getenv("CLOUD_ID"));
+            if (cloudsInfo.stream().map(CloudInfo::getId).noneMatch(cloudIdentifier -> cloudIdentifier == cloud)) {
+                throw new CloudDoesNotExistException();
+            }
+            cloudId = cloud;
+            System.out.println("Set cloudId to: " + cloud);
+
+        } catch (NumberFormatException | CloudDoesNotExistException e) {
+            cloudId = 0;
+            System.out.println("Wrong cloudId given. Set cloudId to default value: 0.");
+        }
+    }
+
+    private void setResources() throws CloudDoesNotExistException {
         int num_user = 1;
         Calendar calendar = Calendar.getInstance();
         boolean trace_flag = false;
@@ -60,21 +80,17 @@ public class CloudsimService {
         Log.printLine("Starting CloudSim...");
         CloudSim.init(num_user, calendar, trace_flag);
 
-        Datacenter datacenter = createDatacenter(cloudId);
+        Datacenter datacenter = createDatacenter();
 
         broker = createBroker();
 
-        List<Vm> vmlist = createVM(cloudId, broker.getId());
+        List<Vm> vmlist = createVM(broker.getId());
         broker.submitVmList(vmlist);
     }
 
-    private Datacenter createDatacenter(int cloudId) throws CloudDoesNotExistException {
+    private Datacenter createDatacenter() {
         List<Host> hostList = new ArrayList<>();
         List<Pe> peList = new ArrayList<>();
-
-        if (cloudsInfo.stream().map(CloudInfo::getId).noneMatch(cloudIdentifier -> cloudIdentifier == cloudId)) {
-            throw new CloudDoesNotExistException();
-        }
 
         peList.add(new Pe(0, new PeProvisionerSimple(cloudsInfo.get(cloudId).getMips())));
         int hostId = 0;
@@ -122,7 +138,7 @@ public class CloudsimService {
         return broker;
     }
 
-    private List<Vm> createVM(int cloudId, int brokerId) {
+    private List<Vm> createVM(int brokerId) {
         int pesNumber = 1; //number of cpus
         String vmm = "Xen"; //VMM name
 
@@ -135,40 +151,31 @@ public class CloudsimService {
         return list;
     }
 
-    private void prepareCloudlets(TaskRequest taskRequest) {
+    private void prepareCloudlets(Task task) {
         int id = 0;
         List<Cloudlet> cloudletList = new ArrayList<>();
         UtilizationModel utilizationModel = new UtilizationModelFull();
 
-        for (CloudletInfo cloudletInfo : taskRequest.getCloudlets()) {
-            Cloudlet cloudlet = new Cloudlet(id, cloudletInfo.getCloudletSize(), cloudletInfo.getProcessingUnits(),
-                    cloudletInfo.getInputAndProgramFileSize(), cloudletInfo.getOutputFileSize(), utilizationModel,
-                    utilizationModel, utilizationModel);
-            cloudlet.setUserId(broker.getId());
-            cloudletList.add(cloudlet);
-            id++;
-        }
+        Cloudlet cloudlet = new Cloudlet(id, task.getCloudletSize(), task.getProcessingUnits(),
+                task.getInputAndProgramFileSize(), task.getOutputFileSize(), utilizationModel,
+                utilizationModel, utilizationModel);
+        cloudlet.setUserId(broker.getId());
+        cloudletList.add(cloudlet);
 
         broker.submitCloudletList(cloudletList);
     }
 
-    private TaskResponse prepareResponse(List<Cloudlet> cloudletReceivedList) {
-        printCloudletList(cloudletReceivedList);
+    private TaskResponse prepareResponse(Cloudlet cloudletReceived) {
+        printCloudletList(cloudletReceived);
         Log.printLine("CloudSim simulation finished!");
 
-        List<Double> executionTimes = new ArrayList<>();
         TaskResponse cloudletsExecutionResponse = new TaskResponse();
-        for (Cloudlet cloudlet : cloudletReceivedList) {
-            executionTimes.add(cloudlet.getActualCPUTime());
-        }
-        cloudletsExecutionResponse.setExecutionTimes(executionTimes);
+        double executionTime = cloudletReceived.getActualCPUTime();
+        cloudletsExecutionResponse.setExecutionTime(executionTime);
         return cloudletsExecutionResponse;
     }
 
-    private static void printCloudletList(List<Cloudlet> list) {
-        int size = list.size();
-        Cloudlet cloudlet;
-
+    private static void printCloudletList(Cloudlet cloudlet) {
         String indent = "    ";
         Log.printLine();
         Log.printLine("========== OUTPUT ==========");
@@ -176,17 +183,15 @@ public class CloudsimService {
                 "Data center ID" + indent + "VM ID" + indent + "Time" + indent + "Start Time" + indent + "Finish Time");
 
         DecimalFormat dft = new DecimalFormat("###.##");
-        for (int i = 0; i < size; i++) {
-            cloudlet = list.get(i);
-            Log.print(indent + cloudlet.getCloudletId() + indent + indent);
 
-            if (cloudlet.getCloudletStatus() == Cloudlet.SUCCESS) {
-                Log.print("SUCCESS");
+        Log.print(indent + cloudlet.getCloudletId() + indent + indent);
 
-                Log.printLine(indent + indent + cloudlet.getResourceId() + indent + indent + indent + cloudlet.getVmId() +
-                        indent + indent + dft.format(cloudlet.getActualCPUTime()) + indent + indent + dft.format(cloudlet.getExecStartTime()) +
-                        indent + indent + dft.format(cloudlet.getFinishTime()));
-            }
+        if (cloudlet.getCloudletStatus() == Cloudlet.SUCCESS) {
+            Log.print("SUCCESS");
+
+            Log.printLine(indent + indent + cloudlet.getResourceId() + indent + indent + indent + cloudlet.getVmId() +
+                    indent + indent + dft.format(cloudlet.getActualCPUTime()) + indent + indent + dft.format(cloudlet.getExecStartTime()) +
+                    indent + indent + dft.format(cloudlet.getFinishTime()));
         }
     }
 }
